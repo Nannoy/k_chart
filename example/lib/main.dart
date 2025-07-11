@@ -44,6 +44,7 @@ class _MyHomePageState extends State<MyHomePage> {
   bool isChangeUI = false;
   bool _isTrendLine = false;
   bool _priceLeft = true;
+  bool _isTapShowInfoDialog = true;
   VerticalTextAlignment _verticalTextAlignment = VerticalTextAlignment.left;
 
   ChartStyle chartStyle = ChartStyle();
@@ -120,7 +121,7 @@ class _MyHomePageState extends State<MyHomePage> {
               //`isChinese` is Deprecated, Use `translations` instead.
               isChinese: isChinese,
               hideGrid: _hideGrid,
-              isTapShowInfoDialog: false,
+              isTapShowInfoDialog: _isTapShowInfoDialog,
               verticalTextAlignment: _verticalTextAlignment,
               maDayList: [1, 100, 1000],
             ),
@@ -196,6 +197,10 @@ class _MyHomePageState extends State<MyHomePage> {
               } else {
                 _verticalTextAlignment = VerticalTextAlignment.right;
               }
+            })),
+        button(_isTapShowInfoDialog ? "Disable Tap Info" : "Enable Tap Info",
+            onPressed: () => setState(() {
+              _isTapShowInfoDialog = !_isTapShowInfoDialog;
             })),
       ],
     );

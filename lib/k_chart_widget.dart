@@ -67,7 +67,7 @@ class KChartWidget extends StatefulWidget {
     this.onSecondaryTap,
     this.volHidden = false,
     this.isLine = false,
-    this.isTapShowInfoDialog = false,
+    this.isTapShowInfoDialog = true,
     this.hideGrid = false,
     @Deprecated('Use `translations` instead.') this.isChinese = false,
     this.showNowPrice = true,
@@ -111,6 +111,17 @@ class _KChartWidgetState extends State<KChartWidget>
 
   double _lastScale = 1.0;
   bool isScale = false, isDrag = false, isLongPress = false, isOnTap = false;
+  
+  // For tap toggle functionality
+  double? _lastTapX;
+  double? _lastTapY;
+  bool _isInfoVisible = false;
+  static const double _tapTolerance = 10.0; // pixels tolerance for same position detection
+  
+  // For crosshair dragging functionality
+  bool _isCrosshairDragging = false;
+  double? _dragStartX;
+  double? _dragStartY;
 
   @override
   void initState() {
@@ -167,7 +178,28 @@ class _KChartWidgetState extends State<KChartWidget>
         mHeight = constraints.maxHeight;
         mWidth = constraints.maxWidth;
 
-        return GestureDetector(
+        return ScrollConfiguration(
+          behavior: _isCrosshairDragging 
+            ? ScrollConfiguration.of(context).copyWith(
+                physics: const NeverScrollableScrollPhysics(),
+              )
+            : ScrollConfiguration.of(context).copyWith(
+                physics: const ClampingScrollPhysics(),
+              ),
+          child: Listener(
+        onPointerMove: (event) {
+          if (_isCrosshairDragging && _isInfoVisible) {
+            // Only update vertical position for vertical-only drags
+            final RenderBox box = context.findRenderObject() as RenderBox;
+            final localPosition = box.globalToLocal(event.position);
+            double newY = localPosition.dy;
+            // Clamp to chart bounds
+            newY = newY.clamp(widget.chartStyle.topPadding, mHeight - widget.chartStyle.bottomPadding);
+            mSelectY = newY;
+            notifyChanged();
+          }
+        },
+        child: GestureDetector(
           onTapUp: (details) {
             if (!widget.isTrendLine &&
                 widget.onSecondaryTap != null &&
@@ -177,12 +209,37 @@ class _KChartWidgetState extends State<KChartWidget>
 
             if (!widget.isTrendLine &&
                 _painter.isInMainRect(details.localPosition)) {
-              isOnTap = true;
-              if (mSelectX != details.localPosition.dx &&
-                  widget.isTapShowInfoDialog) {
-                mSelectX = details.localPosition.dx;
-                notifyChanged();
+              
+              double currentTapX = details.localPosition.dx;
+              double currentTapY = details.localPosition.dy;
+              
+              // Check if this is the same position as last tap
+              bool isSamePosition = (_lastTapX != null && 
+                                   _lastTapY != null &&
+                                   (currentTapX - _lastTapX!).abs() < _tapTolerance && 
+                                   (currentTapY - _lastTapY!).abs() < _tapTolerance);
+              
+              if (isSamePosition && _isInfoVisible) {
+                // Toggle off - hide info
+                isOnTap = false;
+                _isInfoVisible = false;
+                _lastTapX = null;
+                _lastTapY = null;
+                mInfoWindowStream?.sink.add(null);
+              } else {
+                // Show info at new position
+                isOnTap = true;
+                _isInfoVisible = true;
+                _lastTapX = currentTapX;
+                _lastTapY = currentTapY;
+                
+                if (mSelectX != currentTapX && widget.isTapShowInfoDialog) {
+                  mSelectX = currentTapX;
+                  mSelectY = currentTapY;
+                }
               }
+              
+              notifyChanged();
             }
             if (widget.isTrendLine && !isLongPress && enableCordRecord) {
               enableCordRecord = false;
@@ -202,45 +259,113 @@ class _KChartWidgetState extends State<KChartWidget>
               notifyChanged();
             }
           },
-          onHorizontalDragDown: (details) {
-            isOnTap = false;
+
+          onScaleStart: (details) {
             _stopAnimation();
-            _onDragChanged(true);
-          },
-          onHorizontalDragUpdate: (details) {
-            if (isScale || isLongPress) return;
-            mScrollX = ((details.primaryDelta ?? 0) / mScaleX + mScrollX)
-                .clamp(0.0, ChartPainter.maxScrollX)
-                .toDouble();
-            notifyChanged();
-          },
-          onHorizontalDragEnd: (DragEndDetails details) {
-            var velocity = details.velocity.pixelsPerSecond.dx;
-            _onFling(velocity);
-          },
-          onHorizontalDragCancel: () => _onDragChanged(false),
-          onScaleStart: (_) {
             isScale = true;
+            
+            // Check if we should start crosshair dragging
+            if (_isInfoVisible && _painter.isInMainRect(details.localFocalPoint)) {
+              _isCrosshairDragging = true;
+              _dragStartX = details.localFocalPoint.dx;
+              _dragStartY = details.localFocalPoint.dy;
+              
+              // Immediately update crosshair position for responsive feel
+              mSelectX = details.localFocalPoint.dx;
+              mSelectY = details.localFocalPoint.dy;
+              isOnTap = true;
+              _isInfoVisible = true;
+              notifyChanged();
+            } else {
+              // Normal chart scrolling
+              _onDragChanged(true);
+            }
           },
           onScaleUpdate: (details) {
-            if (isDrag || isLongPress) return;
-            mScaleX = (_lastScale * details.scale).clamp(0.5, 2.2);
-            notifyChanged();
+            if (isLongPress) return;
+            
+            if (_isCrosshairDragging) {
+              // Check if we're still in the main chart area
+              if (_painter.isInMainRect(details.localFocalPoint)) {
+                // Move crosshair instead of scrolling chart
+                double newX = details.localFocalPoint.dx;
+                double newY = details.localFocalPoint.dy;
+                
+                // Clamp to chart bounds
+                newX = newX.clamp(0.0, mWidth);
+                newY = newY.clamp(widget.chartStyle.topPadding, mHeight - widget.chartStyle.bottomPadding);
+                
+                mSelectX = newX;
+                mSelectY = newY;
+                isOnTap = true;
+                _isInfoVisible = true;
+                notifyChanged();
+              } else {
+                // Switch to normal scrolling when outside main chart area
+                _isCrosshairDragging = false;
+                _dragStartX = null;
+                _dragStartY = null;
+                isOnTap = false;
+                _isInfoVisible = false;
+                _lastTapX = null;
+                _lastTapY = null;
+                mInfoWindowStream?.sink.add(null);
+                
+                // Only scroll if we need more data
+                double scrollDelta = details.focalPointDelta.dx / mScaleX;
+                if (_shouldScrollForMoreData(scrollDelta)) {
+                  mScrollX = (scrollDelta + mScrollX).clamp(0.0, ChartPainter.maxScrollX).toDouble();
+                }
+                notifyChanged();
+              }
+            } else {
+              // Handle scaling and normal scrolling
+              if (details.scale != 1.0) {
+                // Scaling operation
+                if (_isInfoVisible) {
+                  isOnTap = false;
+                  _isInfoVisible = false;
+                  _lastTapX = null;
+                  _lastTapY = null;
+                  mInfoWindowStream?.sink.add(null);
+                }
+                mScaleX = (_lastScale * details.scale).clamp(0.5, 2.2);
+              } else {
+                // Panning operation (no scaling)
+                isOnTap = false;
+                _isInfoVisible = false;
+                _lastTapX = null;
+                _lastTapY = null;
+                mInfoWindowStream?.sink.add(null);
+                
+                // Only scroll if we need more data or if info is not visible
+                double scrollDelta = details.focalPointDelta.dx / mScaleX;
+                if (!_isInfoVisible || _shouldScrollForMoreData(scrollDelta)) {
+                  mScrollX = (scrollDelta + mScrollX).clamp(0.0, ChartPainter.maxScrollX).toDouble();
+                }
+              }
+              notifyChanged();
+            }
           },
-          onScaleEnd: (_) {
+          onScaleEnd: (details) {
             isScale = false;
             _lastScale = mScaleX;
+            
+            if (_isCrosshairDragging) {
+              // End crosshair dragging
+              _isCrosshairDragging = false;
+              _dragStartX = null;
+              _dragStartY = null;
+            } else {
+              // Normal chart scrolling with fling
+              var velocity = details.velocity.pixelsPerSecond.dx;
+              _onFling(velocity);
+            }
           },
           onLongPressStart: (details) {
             isOnTap = false;
             isLongPress = true;
-            if ((mSelectX != details.localPosition.dx ||
-                    mSelectY != details.globalPosition.dy) &&
-                !widget.isTrendLine) {
-              mSelectX = details.localPosition.dx;
-              notifyChanged();
-            }
-            //For TrendLine
+            // Only handle trend line creation, not info display
             if (widget.isTrendLine && changeinXposition == null) {
               mSelectX = changeinXposition = details.localPosition.dx;
               mSelectY = changeinYposition = details.globalPosition.dy;
@@ -254,13 +379,7 @@ class _KChartWidgetState extends State<KChartWidget>
             }
           },
           onLongPressMoveUpdate: (details) {
-            if ((mSelectX != details.localPosition.dx ||
-                    mSelectY != details.globalPosition.dy) &&
-                !widget.isTrendLine) {
-              mSelectX = details.localPosition.dx;
-              mSelectY = details.localPosition.dy;
-              notifyChanged();
-            }
+            // Only handle trend line drawing, not info display
             if (widget.isTrendLine) {
               mSelectX =
                   mSelectX + (details.localPosition.dx - changeinXposition!);
@@ -286,8 +405,10 @@ class _KChartWidgetState extends State<KChartWidget>
               if (widget.showInfoDialog) _buildInfoDialog()
             ],
           ),
-        );
-      },
+        ),
+        ),
+      );
+    },
     );
   }
 
@@ -343,6 +464,18 @@ class _KChartWidgetState extends State<KChartWidget>
   }
 
   void notifyChanged() => setState(() {});
+  
+  // Check if we need to scroll to show more data
+  bool _shouldScrollForMoreData(double scrollDelta) {
+    if (scrollDelta > 0 && mScrollX <= 0) {
+      // Scrolling right and at left edge - need more historical data
+      return true;
+    } else if (scrollDelta < 0 && mScrollX >= ChartPainter.maxScrollX) {
+      // Scrolling left and at right edge - need more recent data
+      return true;
+    }
+    return false;
+  }
 
   late List<String> infos;
 
@@ -350,7 +483,7 @@ class _KChartWidgetState extends State<KChartWidget>
     return StreamBuilder<InfoWindowEntity?>(
         stream: mInfoWindowStream?.stream,
         builder: (context, snapshot) {
-          if ((!isLongPress && !isOnTap) ||
+          if ((!isOnTap || !_isInfoVisible) ||
               widget.isLine == true ||
               !snapshot.hasData ||
               snapshot.data?.kLineEntity == null) return Container();

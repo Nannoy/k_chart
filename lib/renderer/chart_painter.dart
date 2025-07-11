@@ -258,14 +258,29 @@ class ChartPainter extends BaseChartPainter {
     var index = calculateSelectedX(selectX);
     KLineEntity point = getItem(index);
 
-    TextPainter tp = getTextPainter(point.close, chartColors.crossTextColor);
+    // Calculate the price at the tap Y position
+    double displayPrice;
+    double y;
+    if (isOnTap && isTapShowInfoDialog) {
+      // Use the tap Y position to calculate the price
+      y = selectY;
+      // Ensure Y is within chart bounds
+      y = y.clamp(mTopPadding, size.height - mBottomPadding);
+      // Convert screen Y to price value
+      displayPrice = mMainRenderer.getPrice(y);
+    } else {
+      // Fallback to close price for long press or other cases
+      y = getMainY(point.close);
+      displayPrice = point.close;
+    }
+
+    TextPainter tp = getTextPainter(displayPrice, chartColors.crossTextColor);
     double textHeight = tp.height;
     double textWidth = tp.width;
 
     double w1 = 5;
     double w2 = 3;
     double r = textHeight / 2 + w2;
-    double y = getMainY(point.close);
     double x;
     bool isLeft = false;
     if (translateXtoX(getX(index)) < mWidth / 2) {
@@ -557,7 +572,19 @@ class ChartPainter extends BaseChartPainter {
       ..strokeWidth = this.chartStyle.vCrossWidth
       ..isAntiAlias = true;
     double x = getX(index);
-    double y = getMainY(point.close);
+    
+    // Use the actual tap Y position instead of close price
+    double y;
+    if (isOnTap && isTapShowInfoDialog) {
+      // Use the tap Y position directly (it's already in screen coordinates)
+      y = selectY;
+      // Ensure Y is within chart bounds
+      y = y.clamp(mTopPadding, size.height - mBottomPadding);
+    } else {
+      // Fallback to close price for long press or other cases
+      y = getMainY(point.close);
+    }
+    
     // k线图竖线
     canvas.drawLine(Offset(x, mTopPadding),
         Offset(x, size.height - mBottomPadding), paintY);

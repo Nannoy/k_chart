@@ -37,6 +37,9 @@ abstract class BaseChartRenderer<T> {
   }
 
   double getY(double y) => (maxValue - y) * scaleY + chartRect.top;
+  
+  // Convert Y coordinate to price value
+  double getPrice(double y) => maxValue - (y - chartRect.top) / scaleY;
 
   String format(double? n) {
     if (n == null || n.isNaN) {
